@@ -8,6 +8,7 @@ Gem::Specification.new do |s|
   s.email       = 'me@kaiinui.com'
   s.files       = ["lib/rbbigquery.rb", "lib/rbbigquery/client.rb", "lib/rbbigquery/table.rb", "lib/rbbigquery/schema.rb"]
   s.add_runtime_dependency "google-api-client"
+  s.add_runtime_dependency "virtus"
   s.homepage    = 'https://github.com/kaiinui/rbbigquery'
   s.license     = 'MIT'
 end
