@@ -1,120 +1,63 @@
 module RbBigQuery
   class GoogleApi
-    attr :errors
+
 
     def initialize(opts={})
-      @errors = []
-      check_param opts, :application_name
-      check_param opts, :application_version
-      check_param opts, :key_path
-      check_param opts, :service_email
-      check_param opts, :env, :default => ENV['RBBIGQUERY_ENV'] || ENV['RACK_ENV'] || ENV['RAILS_ENV'] || 'development'
+      #these will be injected into this object as attr_accessor
+      HashParams.new(opts, self) do
+        param :application_name, :required => true
+        param :application_version, :required => true
+        param :key_path, :required => true
+        param :service_email, :required => true
+        param :cache_timeout_in_seconds, coerse: Integer, :default => 60 * 60
+        param :cache_directory, default: '/tmp'
+      end
 
-      @client = Google::APIClient.new(
-          application_name:    opts[:application_name],
-          application_version: opts[:application_version]
+
+      @raw_client = Google::APIClient.new(
+          application_name:    application_name,
+          application_version: application_version
       )
 
-      #authorize
-      key     = Google::APIClient::PKCS12.load_key(File.open(opts[:key_path], mode: 'rb'), 'notasecret')
+      key = Google::APIClient::PKCS12.load_key(File.open(@key_path, mode: 'rb'), 'notasecret')
 
       asserter = Google::APIClient::JWTAsserter.new(
-          opts[:service_email],
+          @service_email,
           'https://www.googleapis.com/auth/bigquery',
           key
       )
 
-      @client.authorization = asserter.authorize
+      @raw_client.authorization = asserter.authorize
+
 
     end
 
 
-    def check_param(opts, key, h = {})
-      opts[key] ||= opts[key.to_s] || h[:default]
-      @errors << "Parameter #{key} is required and missing" unless opts[key]
-      opts[key]
-
-    end
+    def discover(api, version, cache_timeout=nil)
 
 
-    def discover_api(api, version, cached_api_file_name = nil, cache_timeout_in_seconds = nil)
+      cache_timeout ||= @cache_timeout_in_seconds
+      filename      = File.join(@cache_directory, "discovered_google_api_#{api}_#{version}.json")
 
-      # TODO: Make this a setting or a constant
-      cache_timeout_in_seconds ||= 60 * 60
-      cached_api_file_name     ||= "/tmp/discovered_google_api_#{api}_#{version}.json"
+      cache_valid     = File.exists?(filename) && (Time.now - File.ctime(filename)) < cache_timeout
+      cached_document = File.read(filename) if cache_valid
+      #   this will register a previously discovered document with the client
+      #    it eliminates a needless http request
+      @raw_client.register_discovery_document(api, @ersion, cached_document) if cached_document
+      #   #this call will only initiatiate an http response if the discovery document is missing
+      discovered_api = @raw_client.discovered_api(api, version)
+      #
+      #   #if there was no cached document write one.
+      File.write(filename, discovered_api.discovery_document.to_json) unless cached_document
 
-      cached_document          = File.read(cached_api_file_name) if File.exists?(cached_api_file_name) && (Time.now - File.ctime(cached_api_file_name)) < cache_timeout_in_seconds
-
-      # this will register a previously discovered document with the client
-      # it eliminates a needless http request
-      @client.register_discovery_document(api, version, cached_document) if cached_document
-      #this call will only initiatiate an http response if the discovery document is missing
-      discovered_api = @client.discovered_api(api, version)
-
-      #if there was no cached document write one.
-      File.write(cached_api_file_name, discovered_api.discovery_document.to_json) unless cached_document
+      # return the discovered_api
       discovered_api
     end
 
-
+    #delegated methods to @raw_client
+    def execute(*params)
+      @raw_client.execute(*params)
+    end
   end
-
-  def client
-
-  end
-
 end
 
-
-# @params opts [Hash] {:application_name, :application_version, :key_path, :service_email, :project_id}
-def initialize(opts = {})
-
-  @project_id = opts[:project_id]
-  @env        = opts[:env] || ENV['RBBIGQUERY_ENV'] || ENV['RACK_ENV'] || ENV['RAILS_ENV'] || 'development'
-
-
-end
-
-# @return [RbBigQuery::Table]
-def find_or_create_table(dataset, table_id, schema)
-  RbBigQuery::Table.new(self, dataset, table_id, schema)
-end
-
-# Executes provided query.
-# @param [String] query
-# @return [String] row response string
-def query(query)
-  response = execute bq.jobs.query, {}, {'query' => query}
-  build_rows_from_response(response)
-end
-
-# Generic API call
-def execute(api_method, parameters={}, body_object ={}, opts={})
-  parameters['projectId'] ||= parameters.delete(:project_id) || parameters.delete('project_id') || @project_id
-
-  h               = {:api_method => api_method, :parameters => camelize_hash_keys(parameters)}
-  h[:body_object] = camelize_hash_keys(body_object) unless body_object.empty?
-  h.merge.opts unless opts.empty?
-  @client.execute h
-end
-
-def datasets(params={})
-  response = execute(bq.datasets.list, params)
-  body     = JSON.parse(response.body)
-  body['datasets'].map { |h| h['datasetReference']['datasetId'] }
-end
-
-private
-
-
-def camelize_hash_keys(h={})
-  h.inject({}) { |h2, (k, v)| h2[camel_case_lower(k)]=v; h2 }
-end
-
-def camel_case_lower(s)
-  #first word always lower case
-  s.to_s.split('_').inject([]) { |buffer, e| buffer.push(buffer.empty? ? e.downcase : e.capitalize) }.join
-end
-
-
-end

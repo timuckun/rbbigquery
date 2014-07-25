@@ -45,7 +45,23 @@ client = ..
 table = ..
 
 client.query("SELECT * FROM #{table.sql_name}")
+
+#returns a single value, you can send methods to the value
+client.select_value("select count(*) from table_name", :to_i)
 ```
+
+Metadata?
+---
+
+```ruby
+
+client = ..
+table = ..
+
+# pull all known datasets
+client.datasets
+```
+
 
 I'm planning to connect SQL builder so that you don't have to write painfully SQL queries.
 

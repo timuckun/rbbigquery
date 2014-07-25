@@ -1,21 +1,20 @@
 module RbBigQuery
   class Client
-    attr_accessor :client, :project_id
-
+    attr_accessor :client, :project_id, :bq, :api, :version
 
 
     # @params opts [Hash] {:application_name, :application_version, :key_path, :service_email, :project_id}
     def initialize(opts = {})
-      @client = Google::APIClient.new(
-          application_name:    opts[:application_name],
-          application_version: opts[:application_version]
-      )
+      HashParams.new(opts, self) do
+        param :project_id
+        param :env, default: ENV['RBBIGQUERY_ENV'] || ENV['RACK_ENV'] || ENV['RAILS_ENV'] || 'development'
+        param :api, default: 'bigquery'
+        param :version, default: 'v2'
+      end
 
+      @client=RbBigQuery::GoogleApi.new(opts)
 
-      @project_id = opts[:project_id]
-      @env        = opts[:env] || ENV['RBBIGQUERY_ENV'] || ENV['RACK_ENV'] || ENV['RAILS_ENV'] || 'development'
-      authorize(opts[:service_email], opts[:key_path])
-
+      @bq = @client.discover(@api, @version)
 
     end
 
@@ -25,19 +24,27 @@ module RbBigQuery
     end
 
     # Executes provided query.
-    # @param [String] query
-    # @return [String] row response string
+    # @param query [String] query
+    # @return [Array]  An array of hashes
     def query(query)
       response = execute bq.jobs.query, {}, {'query' => query}
       build_rows_from_response(response)
     end
 
+    # Executes provided query and returns the first value of the first row as a scalar value.
+    # @param query [String] query
+    # @param cast [String|Symbol] method to send to the result (optionsl)
+    # @return Scalar value with casting if requested
+    def select_value(query, cast = nil)
+      r=query(query)[0]['f0_']
+      r.send(cast) if cast && r.respond_to?(cast)
+    end
+
     # Generic API call
     def execute(api_method, parameters={}, body_object ={}, opts={})
       parameters['projectId'] ||= parameters.delete(:project_id) || parameters.delete('project_id') || @project_id
-
-      h               = {:api_method => api_method, :parameters => camelize_hash_keys(parameters)}
-      h[:body_object] = camelize_hash_keys(body_object) unless body_object.empty?
+      h                       = {:api_method => api_method, :parameters => parameters}
+      h[:body_object]         = body_object unless body_object.empty?
       h.merge.opts unless opts.empty?
       @client.execute h
     end
@@ -51,31 +58,14 @@ module RbBigQuery
     private
 
 
-    def camelize_hash_keys(h={})
-      h.inject({}) { |h2, (k, v)| h2[camel_case_lower(k)]=v; h2 }
-    end
-
-    def camel_case_lower(s)
-      #first word always lower case
-      s.to_s.split('_').inject([]) { |buffer, e| buffer.push(buffer.empty? ? e.downcase : e.capitalize) }.join
-    end
-
-    def authorize(service_email, key_path)
-      key = Google::APIClient::PKCS12.load_key(File.open(key_path, mode: 'rb'), 'notasecret')
-
-      asserter = Google::APIClient::JWTAsserter.new(
-          service_email,
-          'https://www.googleapis.com/auth/bigquery',
-          key
-      )
-
-      @client.authorization = asserter.authorize
-    end
-
-    def bq
-      @bq ||= discover_api("bigquery", "v2")
-    end
-
+    # def camelize_hash_keys(h={})
+    #   h.inject({}) { |h2, (k, v)| h2[camel_case_lower(k)]=v; h2 }
+    # end
+    #
+    # def camel_case_lower(s)
+    #   #first word always lower case
+    #   s.to_s.split('_').inject([]) { |buffer, e| buffer.push(buffer.empty? ? e.downcase : e.capitalize) }.join
+    # end
 
 
     # Sample response
